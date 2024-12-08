@@ -6,15 +6,18 @@ use winit::{
     window::Window,
 };
 
-fn gui(ctx: &egui::Context) {
+/// return true if quit
+fn gui(ctx: &egui::Context) -> bool {
+    let mut should_quit = false;
+
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.heading("Timings");
         ui.add_space(5.0);
         ui.label("draw 0.3ms");
-        if ui.button("Quit").clicked() {
-            std::process::exit(0);
-        }
+        should_quit = ui.button("Quit").clicked();
     });
+
+    should_quit
 }
 
 async fn run(event_loop: EventLoop<()>, window: Window, egui_ctx: egui::Context) {
@@ -67,9 +70,7 @@ async fn run(event_loop: EventLoop<()>, window: Window, egui_ctx: egui::Context)
 
     let window = &window;
     event_loop
-        .run(move |event, target| {
-            let _ = (&instance, &adapter);
-
+        .run(|event, target| {
             match event {
                 Event::AboutToWait => {
                     window.request_redraw();
@@ -107,7 +108,9 @@ async fn run(event_loop: EventLoop<()>, window: Window, egui_ctx: egui::Context)
                                     NOTE: Gui
                                 */
                                 egui_ctx.begin_frame(egui_input.take_egui_input(&window));
-                                gui(&egui_ctx);
+                                if gui(&egui_ctx) {
+                                    target.exit();
+                                }
                                 egui_ctx.end_frame()
                             };
                             for (id, delta) in egui_output.textures_delta.set {
@@ -126,37 +129,35 @@ async fn run(event_loop: EventLoop<()>, window: Window, egui_ctx: egui::Context)
                                 &paint_jobs,
                                 &screen_desc,
                             );
+                            queue.submit([encoder.finish()]);
 
                             let frame = surface
                                 .get_current_texture()
                                 .expect("Failed to acquire next swap chain texture");
 
-                            if let frame_view =
+                            let frame_view =
                                 frame.texture.create_view(&wgpu::TextureViewDescriptor {
                                     format: Some(config.format),
                                     ..Default::default()
+                                });
+
+                            let mut encoder = device.create_command_encoder(&Default::default());
+                            if let mut pass =
+                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                    label: None,
+                                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                        view: &frame_view,
+                                        resolve_target: None,
+                                        ops: wgpu::Operations {
+                                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                            store: wgpu::StoreOp::Store,
+                                        },
+                                    })],
+                                    ..Default::default()
                                 })
                             {
-                                if let mut pass =
-                                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                        label: None,
-                                        color_attachments: &[Some(
-                                            wgpu::RenderPassColorAttachment {
-                                                view: &frame_view,
-                                                resolve_target: None,
-                                                ops: wgpu::Operations {
-                                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                                    store: wgpu::StoreOp::Store,
-                                                },
-                                            },
-                                        )],
-                                        ..Default::default()
-                                    })
-                                {
-                                    egui_renderer.render(&mut pass, &paint_jobs, &screen_desc);
-                                };
+                                egui_renderer.render(&mut pass, &paint_jobs, &screen_desc);
                             };
-
                             queue.submit([encoder.finish()]);
 
                             window.pre_present_notify();
